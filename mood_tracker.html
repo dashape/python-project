@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Трекер настроения</title>
+<style>
+  :root {
+    --bg: #f5f6fa; --card: #ffffff; --text: #1d2433; --muted: #6b7385;
+    --line: #e2e5ee; --accent: #4f6bed; --red: #e5484d; --good: #2e9e5b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --card: #1b1f29; --text: #e8eaf1; --muted: #9aa1b5;
+      --line: #2b3040; --accent: #7b92ff; --red: #ff6b70; --good: #4cc380;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 14px 40px; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.45;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+  input[type=date], input[type=text] {
+    width: 100%; padding: 9px 10px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: 1rem;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .mood-row { display: flex; align-items: center; gap: 12px; }
+  .mood-val { font-size: 1.4rem; font-weight: 700; min-width: 70px; text-align: right; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  button {
+    padding: 9px 14px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: .95rem; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:hover { filter: brightness(1.08); }
+  .msg { min-height: 1.3em; margin-top: 10px; font-size: .9rem; color: var(--good); }
+  .msg.err { color: var(--red); }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .8rem; }
+  .scroll { overflow-x: auto; }
+  .note { color: var(--muted); font-size: .85rem; }
+  .del { padding: 3px 8px; font-size: .8rem; color: var(--red); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 1.3rem; }
+  .stat span { color: var(--muted); font-size: .8rem; }
+  ul { margin: 10px 0 0; padding-left: 20px; }
+  .legend { font-size: .85rem; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 4px 0 10px; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Трекер настроения</h1>
+  <p class="sub">Настроение, таблетки, статистика и график. Данные хранятся в вашем браузере.</p>
+
+  <section class="card">
+    <h2>Новая запись</h2>
+    <label for="date">Дата</label>
+    <input type="date" id="date">
+
+    <label for="mood">Настроение</label>
+    <div class="mood-row">
+      <input type="range" id="mood" min="1" max="10" value="5">
+      <div class="mood-val" id="moodVal">5/10</div>
+    </div>
+
+    <label for="note">Короткая заметка</label>
+    <input type="text" id="note" placeholder="Например: устал, много учёбы">
+
+    <label for="pills">Принятые таблетки (через запятую)</label>
+    <input type="text" id="pills" placeholder="Например: аспирин, витамин d">
+
+    <div class="btns">
+      <button class="primary" id="btnMood">Записать настроение</button>
+      <button id="btnPills">Отметить таблетки</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </section>
+
+  <section class="card">
+    <h2>График настроения</h2>
+    <div id="chart"></div>
+  </section>
+
+  <section class="card">
+    <h2>Статистика</h2>
+    <div id="stats"></div>
+  </section>
+
+  <section class="card">
+    <h2>История</h2>
+    <div class="scroll" id="history"></div>
+    <div class="btns">
+      <button id="btnExport">Скачать отчёт (.txt)</button>
+      <button id="btnClear">Удалить все данные</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const STORAGE_KEY = "mood_tracker_data";
+let data = loadData();
+
+function loadData() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveData() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    showMsg("Не удалось сохранить данные в браузере.", true);
+  }
+}
+
+function todayStr() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return d.getFullYear() + "-" + m + "-" + day;
+}
+
+function getDay(day) {
+  if (!data[day]) data[day] = { mood: null, note: "", pills: [] };
+  return data[day];
+}
+
+function titleCase(s) {
+  return s.trim().toLowerCase().split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function capitalize(s) {
+  s = s.trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function smile(mood) {
+  if (mood === null) return "–";
+  if (mood <= 3) return "😞";
+  if (mood <= 7) return "😐";
+  return "😊";
+}
+
+function esc(s) {
+  const el = document.createElement("div");
+  el.textContent = s;
+  return el.innerHTML;
+}
+
+function showMsg(text, isError) {
+  const el = document.getElementById("msg");
+  el.textContent = text;
+  el.className = "msg" + (isError ? " err" : "");
+}
+
+function selectedDay() {
+  return document.getElementById("date").value || todayStr();
+}
+
+function addMood() {
+  const day = selectedDay();
+  const mood = Number(document.getElementById("mood").value);
+  const note = capitalize(document.getElementById("note").value);
+  const rec = getDay(day);
+  rec.mood = mood;
+  rec.note = note;
+  saveData();
+  showMsg("Записано: " + day + ", настроение " + mood + "/10");
+  renderAll();
+}
+
+function addPills() {
+  const day = selectedDay();
+  const names = document.getElementById("pills").value.split(",");
+  const rec = getDay(day);
+  const taken = new Set(rec.pills);
+  for (const n of names) {
+    const name = titleCase(n);
+    if (name !== "") taken.add(name);
+  }
+  if (taken.size === 0) {
+    showMsg("Вы ничего не ввели.", true);
+    return;
+  }
+  rec.pills = Array.from(taken).sort();
+  saveData();
+  showMsg("Приём отмечен: " + rec.pills.join(", "));
+  document.getElementById("pills").value = "";
+  renderAll();
+}
+
+function deleteDay(day) {
+  delete data[day];
+  saveData();
+  renderAll();
+}
+
+function renderHistory() {
+  const box = document.getElementById("history");
+  const days = Object.keys(data).sort();
+  if (days.length === 0) {
+    box.innerHTML = '<p class="empty">Записей пока нет.</p>';
+    return;
+  }
+  let html = "<table><thead><tr><th>Дата</th><th>Настроение</th><th>Таблетки</th><th>Заметка</th><th></th></tr></thead><tbody>";
+  for (const day of days) {
+    const rec = data[day];
+    const mood = rec.mood === null ? "–" : rec.mood + "/10";
+    const pills = rec.pills.length ? esc(rec.pills.join(", ")) : '<span class="note">не отмечены</span>';
+    html += "<tr><td>" + day + "</td><td>" + smile(rec.mood) + " " + mood + "</td><td>" +
+      pills + "</td><td>" + esc(rec.note) + '</td><td><button class="del" data-day="' + day + '">✕</button></td></tr>';
+  }
+  html += "</tbody></table>";
+  box.innerHTML = html;
+  box.querySelectorAll(".del").forEach(btn => {
+    btn.addEventListener("click", () => deleteDay(btn.dataset.day));
+  });
+}
+
+function renderStats() {
+  const box = document.getElementById("stats");
+  const moods = {};
+  const pillCount = {};
+  const noPills = [];
+
+  for (const day of Object.keys(data)) {
+    const rec = data[day];
+    if (rec.mood !== null) {
+      moods[day] = rec.mood;
+      if (rec.pills.length === 0) noPills.push(day);
+    }
+    for (const p of rec.pills) pillCount[p] = (pillCount[p] || 0) + 1;
+  }
+
+  const days = Object.keys(moods);
+  if (days.length === 0) {
+    box.innerHTML = '<p class="empty">Недостаточно данных для статистики.</p>';
+    return;
+  }
+
+  const sum = days.reduce((acc, d) => acc + moods[d], 0);
+  const avg = sum / days.length;
+  const best = days.reduce((a, b) => (moods[b] > moods[a] ? b : a));
+  const worst = days.reduce((a, b) => (moods[b] < moods[a] ? b : a));
+
+  let html = '<div class="stats">' +
+    '<div class="stat"><b>' + days.length + '</b><span>дней с записью</span></div>' +
+    '<div class="stat"><b>' + avg.toFixed(1) + '/10</b><span>среднее настроение</span></div>' +
+    '<div class="stat"><b>' + moods[best] + '/10</b><span>лучший день: ' + best + '</span></div>' +
+    '<div class="stat"><b>' + moods[worst] + '/10</b><span>худший день: ' + worst + '</span></div></div>';
+
+  const pillNames = Object.keys(pillCount);
+  if (pillNames.length) {
+    html += "<ul>" + pillNames.map(p => "<li>" + esc(p) + ": " + pillCount[p] + " дн.</li>").join("") + "</ul>";
+  }
+  if (noPills.length) {
+    html += '<p class="note">Дни без отметки о таблетках: ' + noPills.sort().join(", ") + "</p>";
+  }
+  if (avg < 4) {
+    html += '<p class="note">Настроение в среднем низкое. Если это длится долго, стоит поговорить с близкими или врачом.</p>';
+  }
+  box.innerHTML = html;
+}
+
+function renderChart() {
+  const box = document.getElementById("chart");
+  const days = Object.keys(data).filter(d => data[d].mood !== null).sort();
+  if (days.length < 2) {
+    box.innerHTML = '<p class="empty">Для графика нужно минимум 2 записи настроения.</p>';
+    return;
+  }
+
+  const W = 680, H = 280, L = 36, R = 14, T = 14, B = 56;
+  const innerW = W - L - R, innerH = H - T - B;
+  const x = i => L + (innerW * i) / (days.length - 1);
+  const y = m => T + innerH - (innerH * m) / 10;
+
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" role="img" aria-label="График настроения">';
+
+  for (let v = 0; v <= 10; v += 2) {
+    svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) +
+      '" stroke="var(--line)"/><text x="' + (L - 8) + '" y="' + (y(v) + 4) +
+      '" text-anchor="end" font-size="11" fill="var(--muted)">' + v + "</text>";
+  }
+
+  const points = days.map((d, i) => x(i) + "," + y(data[d].mood)).join(" ");
+  svg += '<polyline points="' + points + '" fill="none" stroke="var(--accent)" stroke-width="2.5"/>';
+
+  days.forEach((d, i) => {
+    const hasPills = data[d].pills.length > 0;
+    svg += '<circle cx="' + x(i) + '" cy="' + y(data[d].mood) + '" r="' + (hasPills ? 7 : 4.5) +
+      '" fill="' + (hasPills ? "var(--red)" : "var(--accent)") + '"><title>' + d + ": " +
+      data[d].mood + "/10</title></circle>";
+    const step = Math.ceil(days.length / 8);
+    if (i % step === 0 || i === days.length - 1) {
+      svg += '<text x="' + x(i) + '" y="' + (H - B + 18) + '" font-size="11" fill="var(--muted)" ' +
+        'text-anchor="end" transform="rotate(-35 ' + x(i) + " " + (H - B + 18) + ')">' + d + "</text>";
+    }
+  });
+
+  svg += "</svg>";
+  svg += '<div class="legend"><i style="background:var(--accent)"></i>настроение' +
+    '<i style="background:var(--red)"></i>приём таблеток</div>';
+  box.innerHTML = svg;
+}
+
+function exportReport() {
+  const days = Object.keys(data).sort();
+  if (days.length === 0) {
+    showMsg("Нечего выгружать: записей нет.", true);
+    return;
+  }
+  let text = "ОТЧЁТ ПО ТРЕКЕРУ НАСТРОЕНИЯ\n" + "=".repeat(40) + "\n";
+  for (const day of days) {
+    const rec = data[day];
+    const mood = rec.mood !== null ? rec.mood : "нет данных";
+    const pills = rec.pills.length ? rec.pills.join(", ") : "не отмечены";
+    text += day + " | настроение: " + mood + " | таблетки: " + pills + "\n";
+    if (rec.note) text += "    заметка: " + rec.note + "\n";
+  }
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "report.txt";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showMsg("Отчёт скачан: report.txt");
+}
+
+function clearAll() {
+  if (confirm("Удалить все записи? Это нельзя отменить.")) {
+    data = {};
+    saveData();
+    showMsg("Все данные удалены.");
+    renderAll();
+  }
+}
+
+function renderAll() {
+  renderChart();
+  renderStats();
+  renderHistory();
+}
+
+document.getElementById("date").value = todayStr();
+document.getElementById("mood").addEventListener("input", e => {
+  document.getElementById("moodVal").textContent = smile(Number(e.target.value)) + " " + e.target.value + "/10";
+});
+document.getElementById("btnMood").addEventListener("click", addMood);
+document.getElementById("btnPills").addEventListener("click", addPills);
+document.getElementById("btnExport").addEventListener("click", exportReport);
+document.getElementById("btnClear").addEventListener("click", clearAll);
+renderAll();
+</script>
+</body>
+</html>
